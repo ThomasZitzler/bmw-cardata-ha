@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.device_tracker import TrackerEntity
+from homeassistant.components.device_tracker import TrackerEntity, SourceType
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -22,6 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 LATITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
 LONGITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
 HEADING_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.heading"
+GPS_FIX_STATUS_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.fixStatus"
 
 
 async def async_setup_entry(
@@ -33,18 +34,36 @@ async def async_setup_entry(
     coordinator: CardataCoordinator = hass.data[DOMAIN][config_entry.entry_id].coordinator
 
     entities: list[BMWCarDataDeviceTracker] = []
+    
+    _LOGGER.debug("Setting up BMW CarData device tracker")
 
     # Create device tracker for each vehicle that has location data
+    vins_processed = []
     for vin, _ in coordinator.iter_descriptors(binary=False):
-        # Check if this VIN has latitude/longitude data
-        lat_state = coordinator.get_state(vin, LATITUDE_DESCRIPTOR)
-        lon_state = coordinator.get_state(vin, LONGITUDE_DESCRIPTOR)
-        
-        if lat_state is not None or lon_state is not None:
-            entities.append(BMWCarDataDeviceTracker(coordinator, vin))
+        if vin not in vins_processed:
+            vins_processed.append(vin)
+            # Check if this VIN has latitude/longitude data
+            lat_state = coordinator.get_state(vin, LATITUDE_DESCRIPTOR)
+            lon_state = coordinator.get_state(vin, LONGITUDE_DESCRIPTOR)
+            
+            _LOGGER.debug(
+                "VIN %s: lat_state=%s, lon_state=%s", 
+                vin, 
+                lat_state.value if lat_state else None,
+                lon_state.value if lon_state else None
+            )
+            
+            if lat_state is not None or lon_state is not None:
+                _LOGGER.debug("Creating device tracker for VIN %s", vin)
+                entities.append(BMWCarDataDeviceTracker(coordinator, vin))
+            else:
+                _LOGGER.debug("No location data available for VIN %s", vin)
 
+    _LOGGER.debug("Created %d device tracker entities", len(entities))
     if entities:
         async_add_entities(entities)
+    else:
+        _LOGGER.warning("No device tracker entities created - no vehicles with location data found")
 
 
 class BMWCarDataDeviceTracker(CardataEntity, TrackerEntity):
@@ -64,14 +83,23 @@ class BMWCarDataDeviceTracker(CardataEntity, TrackerEntity):
         self._attr_unique_id = f"{vin}_location"
         self._unsubscribe = None
 
+    @property
+    def source_type(self) -> SourceType:
+        """Return the source type of the device."""
+        return SourceType.GPS
+
     async def async_added_to_hass(self) -> None:
         """Handle entity which will be added."""
         await super().async_added_to_hass()
+        
+        # Subscribe to coordinator updates
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
             self._coordinator.signal_update,
             self._handle_coordinator_update,
         )
+        
+        _LOGGER.debug("Device tracker added for VIN %s", self._vin)
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity which will be removed."""
@@ -91,6 +119,11 @@ class BMWCarDataDeviceTracker(CardataEntity, TrackerEntity):
         heading_state = self._coordinator.get_state(self._vin, HEADING_DESCRIPTOR)
         if heading_state is not None and heading_state.value is not None:
             attrs["direction"] = heading_state.value
+        
+        # Add GPS fix status if available
+        gps_fix_state = self._coordinator.get_state(self._vin, GPS_FIX_STATUS_DESCRIPTOR)
+        if gps_fix_state is not None and gps_fix_state.value is not None:
+            attrs["gps_accuracy"] = gps_fix_state.value
             
         return attrs
 
@@ -124,4 +157,20 @@ class BMWCarDataDeviceTracker(CardataEntity, TrackerEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         # Device tracker is available if we have at least one coordinate
-        return self.latitude is not None or self.longitude is not None
+        lat = self.latitude
+        lon = self.longitude
+        available = lat is not None or lon is not None
+        
+        # Also check GPS fix status for better availability determination
+        gps_fix_state = self._coordinator.get_state(self._vin, GPS_FIX_STATUS_DESCRIPTOR)
+        if gps_fix_state is not None and gps_fix_state.value == "NO_FIX":
+            available = False
+        
+        if not available:
+            _LOGGER.debug(
+                "Device tracker for VIN %s not available - lat: %s, lon: %s, gps_fix: %s", 
+                self._vin, lat, lon, 
+                gps_fix_state.value if gps_fix_state else "unknown"
+            )
+        
+        return available
