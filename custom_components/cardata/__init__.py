@@ -56,7 +56,7 @@ from .debug import set_debug_enabled
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[str] = ["sensor", "binary_sensor"]
+PLATFORMS: list[str] = ["sensor", "binary_sensor", "device_tracker"]
 
 @dataclass
 class CardataRuntimeData:
