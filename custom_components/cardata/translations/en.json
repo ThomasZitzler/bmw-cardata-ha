@@ -30,5 +30,12 @@
     "abort": {
       "reauth_started": "Authorization restarted. Complete the new login flow from the notification."
     }
+  },
+  "entity": {
+    "device_tracker": {
+      "vehicle_location": {
+        "name": "Vehicle Location"
+      }
+    }
   }
 }
