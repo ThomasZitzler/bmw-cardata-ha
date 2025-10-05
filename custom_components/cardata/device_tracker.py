@@ -69,7 +69,6 @@ async def async_setup_entry(
 class BMWCarDataDeviceTracker(CardataEntity, TrackerEntity):
     """BMW CarData device tracker."""
 
-    _attr_should_poll = False
     _attr_force_update = False
     _attr_translation_key = "vehicle_location"
     _attr_name = "Vehicle Location"
@@ -80,8 +79,7 @@ class BMWCarDataDeviceTracker(CardataEntity, TrackerEntity):
         vin: str,
     ) -> None:
         """Initialize the Device Tracker."""
-        # Use the latitude descriptor as the base descriptor for proper device association
-        super().__init__(coordinator, vin, LATITUDE_DESCRIPTOR)
+        super().__init__(coordinator, vin, "location")
         self._attr_unique_id = f"{vin}_location"
         self._unsubscribe = None
 
@@ -98,12 +96,8 @@ class BMWCarDataDeviceTracker(CardataEntity, TrackerEntity):
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
             self._coordinator.signal_update,
-            self._handle_update,
+            self._handle_coordinator_update,
         )
-        
-        # Initial update for all location descriptors
-        self._handle_update(self._vin, LATITUDE_DESCRIPTOR)
-        self._handle_update(self._vin, LONGITUDE_DESCRIPTOR)
         
         _LOGGER.debug("Device tracker added for VIN %s", self._vin)
 
@@ -112,18 +106,9 @@ class BMWCarDataDeviceTracker(CardataEntity, TrackerEntity):
         if self._unsubscribe is not None:
             self._unsubscribe()
 
-    def _handle_update(self, vin: str, descriptor: str) -> None:
+    def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        # Only update if this is for our vehicle and a location-related descriptor
-        if vin != self._vin:
-            return
-            
-        if descriptor not in [LATITUDE_DESCRIPTOR, LONGITUDE_DESCRIPTOR, HEADING_DESCRIPTOR, GPS_FIX_STATUS_DESCRIPTOR]:
-            return
-            
-        # Schedule an update when any location data changes
-        _LOGGER.debug("Device tracker update triggered for VIN %s, descriptor %s", vin, descriptor)
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
